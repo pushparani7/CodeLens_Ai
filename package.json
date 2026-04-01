@@ -1,0 +1,32 @@
+{
+  "name": "codelens-ai",
+  "version": "1.0.0",
+  "description": "GitHub Mentor Agent — explains repos, generates interview questions, suggests improvements, and explains code.",
+  "type": "module",
+  "main": "demo/index.js",
+  "scripts": {
+    "demo": "node demo/index.js",
+    "demo:explain": "node demo/index.js explain",
+    "demo:interview": "node demo/index.js interview",
+    "demo:improve": "node demo/index.js improve",
+    "demo:explain-code": "node demo/index.js explain-code",
+    "validate": "npx gitagent validate",
+    "info": "npx gitagent info"
+  },
+  "dependencies": {
+    "gitclaw": "latest"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "ai-agent",
+    "code-review",
+    "developer-tools",
+    "mentorship",
+    "gitagent",
+    "gitclaw"
+  ],
+  "author": "CodeLens AI",
+  "license": "MIT"
+}

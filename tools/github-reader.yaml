@@ -1,0 +1,60 @@
+name: github-reader
+description: "Reads files and directory listings from a GitHub repository via the GitHub API. Used to analyze remote repos without cloning locally."
+version: "1.0.0"
+
+input_schema:
+  type: object
+  properties:
+    action:
+      type: string
+      enum: [list_directory, read_file, get_repo_info]
+      description: "The operation to perform"
+    repo:
+      type: string
+      description: "GitHub repo in 'owner/repo' format (e.g. 'facebook/react')"
+    path:
+      type: string
+      description: "File or directory path within the repo (e.g. 'src/index.js' or 'src/')"
+      default: ""
+    ref:
+      type: string
+      description: "Branch, tag, or commit SHA to read from"
+      default: "main"
+  required: [action, repo]
+
+output_schema:
+  type: object
+  properties:
+    content:
+      type: string
+      description: "File content (for read_file) or directory listing (for list_directory)"
+    files:
+      type: array
+      items:
+        type: object
+        properties:
+          name: { type: string }
+          path: { type: string }
+          type: { type: string, enum: [file, dir] }
+          size: { type: integer }
+    repo_info:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        language: { type: string }
+        stars: { type: integer }
+        topics: { type: array, items: { type: string } }
+        default_branch: { type: string }
+
+examples:
+  - action: get_repo_info
+    repo: "expressjs/express"
+
+  - action: list_directory
+    repo: "expressjs/express"
+    path: "lib/"
+
+  - action: read_file
+    repo: "expressjs/express"
+    path: "lib/router/index.js"
