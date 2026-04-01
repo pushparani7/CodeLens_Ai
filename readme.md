@@ -30,7 +30,7 @@ cd codelens-ai
 npm install
 
 # Set your API key
-export ANTHROPIC_API_KEY=sk-ant-...
+set GOOGLE_GENERATIVE_AI_API_KEY="AI....."
 
 # Run the interactive demo
 npm run demo
