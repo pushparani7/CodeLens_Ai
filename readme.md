@@ -87,7 +87,7 @@ import { query } from "gitclaw";
 for await (const msg of query({
   prompt: "Use the explain-repo skill. Target: https://github.com/expressjs/express. Explain the architecture, tech stack, and main execution flow.",
   dir: "./codelens-ai",   // path to this agent repo
-  model: "anthropic:claude-sonnet-4-5-20250929",
+  model: "gemini-2.5-flash",
 })) {
   if (msg.type === "delta") process.stdout.write(msg.content);
   if (msg.type === "assistant") console.log("\nDone!");
@@ -133,7 +133,7 @@ From `SOUL.md`:
 
 - [gitagent](https://github.com/open-gitagent/gitagent) — Agent definition standard
 - [gitclaw](https://github.com/open-gitagent/gitclaw) — Agent runtime SDK
-- [Anthropic Claude](https://anthropic.com) — Underlying model
+- [gemini]
 
 ---
 
