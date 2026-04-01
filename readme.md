@@ -1,6 +1,6 @@
 # 🔍 CodeLens AI
 
-> **Your GitHub Mentor Agent** — explains repos, generates interview questions, suggests improvements, and teaches code. With personality.
+> **Your GitHub Mentor Agent** explains repos, generates interview questions, suggests improvements, and teaches code. With personality.
 
 Built for the [gitagent Hackathon](https://www.gitagent.sh/) using the [gitagent standard](https://github.com/open-gitagent/gitagent) and [gitclaw SDK](https://github.com/open-gitagent/gitclaw).
 
