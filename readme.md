@@ -1,6 +1,6 @@
 # 🔍 CodeLens AI
 
-> **Your GitHub Mentor Agent** — explains repos, generates interview questions, suggests improvements, and teaches code. With personality.
+> **Your GitHub Mentor Agent** explains repos, generates interview questions, suggests improvements, and teaches code. With personality.
 
 Built for the [gitagent Hackathon](https://www.gitagent.sh/) using the [gitagent standard](https://github.com/open-gitagent/gitagent) and [gitclaw SDK](https://github.com/open-gitagent/gitclaw).
 
@@ -30,7 +30,7 @@ cd codelens-ai
 npm install
 
 # Set your API key
-export ANTHROPIC_API_KEY=sk-ant-...
+set GOOGLE_GENERATIVE_AI_API_KEY="AI....."
 
 # Run the interactive demo
 npm run demo
@@ -87,7 +87,7 @@ import { query } from "gitclaw";
 for await (const msg of query({
   prompt: "Use the explain-repo skill. Target: https://github.com/expressjs/express. Explain the architecture, tech stack, and main execution flow.",
   dir: "./codelens-ai",   // path to this agent repo
-  model: "anthropic:claude-sonnet-4-5-20250929",
+  model: "gemini-2.5-flash",
 })) {
   if (msg.type === "delta") process.stdout.write(msg.content);
   if (msg.type === "assistant") console.log("\nDone!");
@@ -133,7 +133,7 @@ From `SOUL.md`:
 
 - [gitagent](https://github.com/open-gitagent/gitagent) — Agent definition standard
 - [gitclaw](https://github.com/open-gitagent/gitclaw) — Agent runtime SDK
-- [Anthropic Claude](https://anthropic.com) — Underlying model
+- [gemini]
 
 ---
 
