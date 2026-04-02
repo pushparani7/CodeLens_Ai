@@ -1,48 +1,69 @@
 /**
- * CodeLens AI — Demo
- * Reads agent definition (SOUL.md, RULES.md, SKILL.md) and calls Gemini API directly.
+ * CodeLens AI — gitagent-compatible runner
+ *
+ * Replicates gitclaw's core behavior:
+ *   1. Reads agent.yaml  → metadata
+ *   2. Reads SOUL.md     → identity/personality (system prompt layer 1)
+ *   3. Reads RULES.md    → constraints (system prompt layer 2)
+ *   4. Reads skills/<name>/SKILL.md → active skill instructions (system prompt layer 3)
+ *   5. Calls Gemini with the composed system prompt
+ *   6. Streams the response
+ *
+ * This is exactly what gitclaw does internally — we just use Gemini as the model.
  *
  * Usage:
- *   node demo/index.js                 → interactive menu
- *   node demo/index.js explain         → explain a repo
- *   node demo/index.js interview       → generate interview questions
- *   node demo/index.js improve         → suggest improvements
- *   node demo/index.js explain-code    → explain specific code
+ *   node demo/index.js                  → interactive menu
+ *   node demo/index.js explain          → explain a repo
+ *   node demo/index.js interview        → generate interview questions
+ *   node demo/index.js improve          → suggest improvements
+ *   node demo/index.js explain-code     → explain specific code
  *
  * Requires: GOOGLE_API_KEY from https://aistudio.google.com/app/apikey
  */
 
-import fs from "fs";
+import fs   from "fs";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname  = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR  = path.resolve(__dirname, "..");
-const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:streamGenerateContent?alt=sse";
+// Models to try in order — auto-detects which one your API key supports
+const GEMINI_MODELS = [
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-latest",
+  "gemini-1.5-flash-001",
+  "gemini-1.5-flash-002",
+  "gemini-1.5-pro",
+  "gemini-1.5-pro-latest",
+  "gemini-pro",
+  "gemini-1.0-pro",
+];
 
-// Pick an available model that supports `generateContent` using ListModels
-async function pickAvailableModel(apiKey) {
+async function detectModel(apiKey) {
+  log.info("Detecting available Gemini model for your API key...");
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-    if (!res.ok) return null;
-    const body = await res.json();
-    const models = body.models || [];
+    const data = await res.json();
+    const available = (data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map(m => m.name.replace("models/", ""));
+    log.agent(`Available models: ${available.join(", ")}`);
 
-    // Prefer newer Gemini models, then fall back to any model that supports generateContent
-    // Prefer stable Flash models first (commonly available on free tiers), then pro/other Gemini families
-    const preferredOrder = ["gemini-2.5-flash", "gemini-2.5", "gemini-flash-latest", "gemini-flash", "gemini-2.0", "gemini-pro", "gemini"];
-    // Find any model whose name contains a preferred token and supports generateContent
-    for (const token of preferredOrder) {
-      const m = models.find(m => m.name.includes(token) && (m.supportedGenerationMethods || []).includes("generateContent"));
-      if (m) return m.name;
+    // Pick first match from our preferred list
+    for (const preferred of GEMINI_MODELS) {
+      if (available.includes(preferred)) {
+        log.success(`Using model: ${preferred}\n`);
+        return preferred;
+      }
     }
-
-    // Otherwise return the first model that supports generateContent
-    const any = models.find(m => (m.supportedGenerationMethods || []).includes("generateContent"));
-    return any ? any.name : null;
-  } catch {
-    return null;
+    // Fallback: just use first available that has "gemini" in name
+    const fallback = available.find(m => m.includes("gemini")) || available[0];
+    log.warn(`Using fallback model: ${fallback}`);
+    return fallback;
+  } catch (e) {
+    log.warn(`Model detection failed: ${e.message}. Defaulting to gemini-1.5-flash.`);
+    return "gemini-1.5-flash";
   }
 }
 
@@ -50,7 +71,7 @@ async function pickAvailableModel(apiKey) {
 const c = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
   cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m",
-  red: "\x1b[31m",  magenta: "\x1b[35m",
+  red: "\x1b[31m",  magenta: "\x1b[35m", blue: "\x1b[34m",
 };
 const log = {
   info:    (m) => console.log(`${c.cyan}${c.bold}[CodeLens]${c.reset} ${m}`),
@@ -59,263 +80,275 @@ const log = {
   error:   (m) => console.log(`${c.red}✗ ${m}${c.reset}`),
   divider: ()  => console.log(`${c.dim}${"─".repeat(60)}${c.reset}`),
   header:  (m) => console.log(`\n${c.magenta}${c.bold}${"═".repeat(60)}\n  ${m}\n${"═".repeat(60)}${c.reset}\n`),
+  agent:   (m) => console.log(`${c.blue}${c.bold}[agent]${c.reset} ${c.dim}${m}${c.reset}`),
 };
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
-function startSpinner(message = "Thinking") {
-  const frames = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+function startSpinner(msg = "Thinking") {
+  const f = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
   let i = 0;
-  const timer = setInterval(() => {
-    process.stdout.write(`\r${c.cyan}${frames[i++ % frames.length]}${c.reset} ${message}...   `);
-  }, 80);
-  return () => { clearInterval(timer); process.stdout.write("\r" + " ".repeat(message.length + 12) + "\r"); };
+  const t = setInterval(() => process.stdout.write(`\r${c.cyan}${f[i++%f.length]}${c.reset} ${msg}...   `), 80);
+  return () => { clearInterval(t); process.stdout.write("\r" + " ".repeat(msg.length + 12) + "\r"); };
 }
 
 // ─── Ask ──────────────────────────────────────────────────────────────────────
 function ask(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((res) => rl.question(`${c.yellow}? ${q}${c.reset} `, (a) => { rl.close(); res(a.trim()); }));
+  return new Promise(res => rl.question(`${c.yellow}? ${q}${c.reset} `, a => { rl.close(); res(a.trim()); }));
 }
 
-// ─── Read agent files ─────────────────────────────────────────────────────────
-function readFile(relPath) {
+// ─── Read agent file ──────────────────────────────────────────────────────────
+function readAgentFile(relPath) {
   const full = path.join(AGENT_DIR, relPath);
-  return fs.existsSync(full) ? fs.readFileSync(full, "utf8") : "";
+  if (!fs.existsSync(full)) return null;
+  return fs.readFileSync(full, "utf8");
 }
 
+// ─── Parse agent.yaml (simple, no deps) ──────────────────────────────────────
+function parseAgentYaml() {
+  const raw = readAgentFile("agent.yaml") || "";
+  const name    = (raw.match(/^name:\s*(.+)$/m)    || [])[1]?.trim() || "codelens-ai";
+  const desc    = (raw.match(/^description:\s*"?(.+?)"?$/m) || [])[1]?.trim() || "";
+  const version = (raw.match(/^version:\s*(.+)$/m)  || [])[1]?.trim() || "1.0.0";
+  const skills  = [...raw.matchAll(/^  - (.+)$/gm)].map(m => m[1].trim());
+  return { name, desc, version, skills };
+}
+
+// ─── BUILD SYSTEM PROMPT (exactly what gitclaw does) ──────────────────────────
 function buildSystemPrompt(skillName) {
-  const soul  = readFile("SOUL.md");
-  const rules = readFile("RULES.md");
-  const skill = readFile(`skills/${skillName}/SKILL.md`);
-  return `${soul}\n\n---\n\n${rules}\n\n---\n\n## Active Skill: ${skillName}\n\n${skill}`.trim();
+  const agent = parseAgentYaml();
+  const soul  = readAgentFile("SOUL.md")  || "";
+  const rules = readAgentFile("RULES.md") || "";
+  const skill = readAgentFile(`skills/${skillName}/SKILL.md`) || "";
+
+  // Log what we're loading — proves agent files are being used
+  log.agent(`Loading agent: ${agent.name} v${agent.version}`);
+  log.agent(`Reading SOUL.md     (${soul.length} chars)`);
+  log.agent(`Reading RULES.md    (${rules.length} chars)`);
+  log.agent(`Reading skills/${skillName}/SKILL.md (${skill.length} chars)`);
+
+  // Extract key sections only to save tokens
+  const soulSummary  = soul.slice(0, 800);
+  const rulesSummary = rules.slice(0, 600);
+  const skillFull    = skill.slice(0, 1500);
+
+  const systemPrompt = `You are ${agent.name} — ${agent.desc}
+
+IDENTITY (from SOUL.md):
+${soulSummary}
+
+RULES (from RULES.md):
+${rulesSummary}
+
+ACTIVE SKILL: ${skillName} (from skills/${skillName}/SKILL.md):
+${skillFull}
+
+Always be specific. Read actual repo content. Never hallucinate files or code.`;
+
+  log.agent(`System prompt built: ${systemPrompt.length} chars\n`);
+  return systemPrompt;
 }
 
-// ─── GitHub reader (public repos, no auth needed) ─────────────────────────────
-async function githubFetch(owner, repo, filePath = "") {
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
-  const res  = await fetch(url, { headers: { "User-Agent": "codelens-ai", Accept: "application/vnd.github+json" } });
-  if (!res.ok) throw new Error(`GitHub API error: ${res.status} ${res.statusText} — ${url}`);
-  return res.json();
-}
-
-async function readGithubRepo(repoUrl) {
-  // Parse owner/repo from URL
+// ─── Fetch GitHub repo content ────────────────────────────────────────────────
+async function fetchGithubRepo(repoUrl) {
   const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-  if (!match) throw new Error(`Could not parse GitHub URL: ${repoUrl}`);
+  if (!match) return `Target: ${repoUrl}`;
   const [, owner, repo] = match;
 
-  log.info(`Fetching repo: ${c.bold}${owner}/${repo}${c.reset}`);
-  const stop = startSpinner("Reading GitHub repo");
+  log.info(`Fetching ${c.bold}${owner}/${repo}${c.reset} from GitHub...`);
+  const stop = startSpinner("Reading repository files");
 
   try {
-    // Get repo metadata
-    const metaRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      headers: { "User-Agent": "codelens-ai", Accept: "application/vnd.github+json" }
-    });
-    const meta = await metaRes.json();
+    const [metaRes, treeRes] = await Promise.all([
+      fetch(`https://api.github.com/repos/${owner}/${repo}`,
+        { headers: { "User-Agent": "codelens-ai/1.0" } }),
+      fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`,
+        { headers: { "User-Agent": "codelens-ai/1.0" } }),
+    ]);
 
-    // Get file tree
-    const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`, {
-      headers: { "User-Agent": "codelens-ai", Accept: "application/vnd.github+json" }
-    });
+    const meta = await metaRes.json();
     const tree = await treeRes.json();
 
     const files = (tree.tree || [])
-      .filter(f => f.type === "blob" && f.size < 100000) // skip huge files
-      .filter(f => /\.(py|js|ts|jsx|tsx|java|go|rs|rb|php|cs|cpp|c|h|md|yaml|yml|json|txt|toml|cfg|env\.example|ipynb)$/i.test(f.path))
-      .slice(0, 30); // cap at 30 files for context window
+      .filter(f => f.type === "blob" && f.size < 80000)
+      .filter(f => /\.(py|js|ts|md|yaml|yml|json|ipynb|java|go|rb|txt|toml|cfg|env\.example)$/i.test(f.path))
+      .slice(0, 30);
 
-    stop();
-    log.info(`Found ${files.length} files to analyze`);
-
-    // Read file contents (up to 20 files, prioritise important ones)
-    const priority = ["README", "requirements", "package.json", "setup.py", "main", "app", "index", "config"];
+    // Prioritise important files
+    const priority = ["README","requirements","package.json","setup.py","main","app","index","config"];
     files.sort((a, b) => {
       const aP = priority.findIndex(p => a.path.toLowerCase().includes(p));
       const bP = priority.findIndex(p => b.path.toLowerCase().includes(p));
       return (aP === -1 ? 999 : aP) - (bP === -1 ? 999 : bP);
     });
 
+    stop();
+    log.success(`Found ${files.length} files`);
+
     const readStop = startSpinner("Reading file contents");
-    const fileContents = [];
-    for (const file of files.slice(0, 20)) {
+    const contents = [];
+    for (const f of files.slice(0, 10)) {
       try {
-        const raw = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${file.path}`);
-        if (raw.ok) {
-          const content = await raw.text();
-          fileContents.push(`\n--- FILE: ${file.path} ---\n${content.slice(0, 3000)}`);
-        }
-      } catch { /* skip unreadable files */ }
+        const r = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${f.path}`);
+        if (r.ok) contents.push(`\n=== FILE: ${f.path} ===\n${(await r.text()).slice(0, 1500)}`);
+      } catch {}
     }
     readStop();
 
-    return {
-      summary: `Repo: ${owner}/${repo}\nDescription: ${meta.description || "N/A"}\nLanguage: ${meta.language || "N/A"}\nStars: ${meta.stargazers_count}\nTopics: ${(meta.topics || []).join(", ") || "N/A"}`,
-      fileTree: files.map(f => f.path).join("\n"),
-      fileContents: fileContents.join("\n"),
-    };
+    return `REPOSITORY: ${owner}/${repo}
+Description: ${meta.description || "N/A"}
+Primary Language: ${meta.language || "N/A"}
+Stars: ${meta.stargazers_count || 0}
+Topics: ${(meta.topics || []).join(", ") || "N/A"}
+
+FILE TREE:
+${files.map(f => f.path).join("\n")}
+
+FILE CONTENTS:
+${contents.join("\n")}`;
+
   } catch (err) {
     stop();
-    throw err;
+    log.warn(`GitHub fetch failed: ${err.message}`);
+    return `Target repository: ${repoUrl} (could not fetch files: ${err.message})`;
   }
 }
 
-// ─── Gemini streaming call ────────────────────────────────────────────────────
-async function callGemini(systemPrompt, userPrompt) {
+// ─── Call Gemini (streaming) ──────────────────────────────────────────────────
+async function callGemini(systemPrompt, userMessage) {
   const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const model  = await detectModel(apiKey);
+  const url    = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const stop   = startSpinner("Agent thinking");
+  let   firstToken = false;
 
-  const body = JSON.stringify({
-    system_instruction: { parts: [{ text: systemPrompt }] },
-    contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-    generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
-  });
-  // Choose an available model and use non-streaming generateContent (safer across API versions)
-  const modelName = await pickAvailableModel(apiKey);
-  if (!modelName) throw new Error("Could not find any available model that supports generateContent for your API key.");
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${apiKey}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body,
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: "user", parts: [{ text: userMessage }] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
+    }),
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    if (res.status === 404) {
-      try {
-        const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-        const listText = await listRes.text();
-        throw new Error(`Gemini API error ${res.status}: ${err}\n\nListModels response:\n${listText}`);
-      } catch (listErr) {
-        throw new Error(`Gemini API error ${res.status}: ${err}\nAdditionally, failed to list models: ${listErr.message}`);
-      }
-    }
-    throw new Error(`Gemini API error ${res.status}: ${err}`);
+    stop();
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Gemini API error ${res.status}`);
   }
 
-  // Non-streaming response: parse JSON and print the candidate text
-  const json = await res.json();
-  const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (text) process.stdout.write(text);
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for await (const chunk of res.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data);
+        const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          if (!firstToken) { stop(); firstToken = true; console.log(); }
+          process.stdout.write(text);
+        }
+      } catch {}
+    }
+  }
+
+  if (!firstToken) stop();
+  console.log("\n");
 }
 
-// ─── Main runner ──────────────────────────────────────────────────────────────
-async function runSkill(skillName, label, buildUserPrompt) {
+// ─── Run a skill ──────────────────────────────────────────────────────────────
+async function runSkill(skillName, label, userMessage) {
   log.header(`CodeLens AI — ${label}`);
   log.divider();
   console.log();
 
   const systemPrompt = buildSystemPrompt(skillName);
-  const userPrompt   = await buildUserPrompt();
-
-  if (!userPrompt) { log.error("Cancelled."); return; }
-
-  const stop = startSpinner("Thinking");
+  log.divider();
 
   try {
-    // Stream starts — clear spinner on first output
-    let started = false;
-    const origWrite = process.stdout.write.bind(process.stdout);
-
-    // Patch stdout to detect first write
-    process.stdout.write = function(chunk, ...args) {
-      if (!started) { started = true; stop(); process.stdout.write = origWrite; }
-      return origWrite(chunk, ...args);
-    };
-
-    await callGemini(systemPrompt, userPrompt);
-
-    if (!started) stop();
-    process.stdout.write = origWrite;
-    console.log("\n");
+    await callGemini(systemPrompt, userMessage);
     log.divider();
     log.success("Done.\n");
   } catch (err) {
-    stop();
-    process.stdout.write("\n");
     log.error(`${err.message}`);
-    if (err.message.includes("API_KEY_INVALID") || err.message.includes("403")) {
-      log.warn("Your GOOGLE_API_KEY might be invalid. Check: https://aistudio.google.com/app/apikey");
+    if (err.message.includes("not found")) {
+      log.warn("Model not available. Try setting a different model in GEMINI_URL.");
+    }
+    if (err.message.includes("quota") || err.message.includes("429")) {
+      log.warn("Quota exceeded. Wait 1 minute and try again.");
     }
     process.exit(1);
   }
 }
 
-// ─── Skill handlers ───────────────────────────────────────────────────────────
+// ─── Skills ───────────────────────────────────────────────────────────────────
 
 async function explainRepo() {
-  await runSkill("explain-repo", "Explain Repo", async () => {
-    const target = await ask("GitHub repo URL or local path to explain:");
-    if (!target) return null;
-
-    let repoContext = `Target to analyze: ${target}\n`;
-    if (target.includes("github.com")) {
-      try {
-        const { summary, fileTree, fileContents } = await readGithubRepo(target);
-        repoContext += `\n## Repository Info\n${summary}\n\n## File Tree\n${fileTree}\n\n## File Contents\n${fileContents}`;
-      } catch (e) {
-        log.warn(`Could not fetch GitHub data: ${e.message}`);
-        repoContext += "\n(Could not fetch files — provide analysis based on repo URL context)";
-      }
-    }
-    return `${repoContext}\n\nPlease provide a complete repository explanation following your explain-repo skill instructions.`;
-  });
+  const target = await ask("GitHub repo URL or local path:");
+  if (!target) return;
+  const repoData = target.includes("github.com") ? await fetchGithubRepo(target) : `Local path: ${target}`;
+  await runSkill(
+    "explain-repo",
+    "Explain Repo",
+    `Please explain this repository using your explain-repo skill.\n\n${repoData}`
+  );
 }
 
 async function generateInterviewQuestions() {
-  await runSkill("generate-interview-questions", "Generate Interview Questions", async () => {
-    const target = await ask("GitHub repo URL or local path:");
-    const role   = await ask("Target role? (junior / mid-level / senior / all):");
-    if (!target) return null;
-
-    let repoContext = `Target: ${target}\nRole focus: ${role || "all levels"}\n`;
-    if (target.includes("github.com")) {
-      try {
-        const { summary, fileTree, fileContents } = await readGithubRepo(target);
-        repoContext += `\n## Repository Info\n${summary}\n\n## File Tree\n${fileTree}\n\n## File Contents\n${fileContents}`;
-      } catch (e) { log.warn(`Could not fetch GitHub data: ${e.message}`); }
-    }
-    return `${repoContext}\n\nGenerate codebase-specific interview questions grounded in the actual code above. Follow your generate-interview-questions skill instructions.`;
-  });
+  const target = await ask("GitHub repo URL:");
+  const role   = await ask("Target level? (junior / mid-level / senior / all):");
+  if (!target) return;
+  const repoData = target.includes("github.com") ? await fetchGithubRepo(target) : `Local path: ${target}`;
+  await runSkill(
+    "generate-interview-questions",
+    "Generate Interview Questions",
+    `Generate interview questions for this repository.\nLevel: ${role || "all"}\n\n${repoData}`
+  );
 }
 
 async function suggestImprovements() {
-  await runSkill("suggest-improvements", "Suggest Improvements", async () => {
-    const target = await ask("GitHub repo URL or local path:");
-    const focus  = await ask("Focus area? (security / performance / all):");
-    if (!target) return null;
-
-    let repoContext = `Target: ${target}\nFocus: ${focus || "all"}\n`;
-    if (target.includes("github.com")) {
-      try {
-        const { summary, fileTree, fileContents } = await readGithubRepo(target);
-        repoContext += `\n## Repository Info\n${summary}\n\n## File Tree\n${fileTree}\n\n## File Contents\n${fileContents}`;
-      } catch (e) { log.warn(`Could not fetch GitHub data: ${e.message}`); }
-    }
-    return `${repoContext}\n\nProvide a prioritized improvement report. Follow your suggest-improvements skill instructions.`;
-  });
+  const target = await ask("GitHub repo URL:");
+  const focus  = await ask("Focus area? (security / performance / all):");
+  if (!target) return;
+  const repoData = target.includes("github.com") ? await fetchGithubRepo(target) : `Local path: ${target}`;
+  await runSkill(
+    "suggest-improvements",
+    "Suggest Improvements",
+    `Provide a prioritized improvement report for this repository.\nFocus: ${focus || "all"}\n\n${repoData}`
+  );
 }
 
 async function explainCode() {
-  await runSkill("explain-code", "Explain Code", async () => {
-    const target = await ask("GitHub repo URL or local path:");
-    const file   = await ask("Specific file to explain (e.g. src/app.py):");
-    const level  = await ask("Audience level? (beginner / mid / senior):");
-    if (!target) return null;
+  const target = await ask("GitHub repo URL:");
+  const file   = await ask("Specific file to explain (e.g. src/app.py):");
+  const level  = await ask("Audience level? (beginner / mid / senior):");
+  if (!target) return;
 
-    let repoContext = `Target: ${target}\nFile to explain: ${file || "main entry file"}\nAudience: ${level || "mid-level"}\n`;
-    if (target.includes("github.com") && file) {
+  let repoData = `Target: ${target}\nFile: ${file}`;
+  if (target.includes("github.com") && file) {
+    const match = target.match(/github\.com\/([^/]+)\/([^/]+)/);
+    if (match) {
       try {
-        const match = target.match(/github\.com\/([^/]+)\/([^/]+)/);
-        if (match) {
-          const raw = await fetch(`https://raw.githubusercontent.com/${match[1]}/${match[2]}/HEAD/${file}`);
-          if (raw.ok) repoContext += `\n## File Content\n${await raw.text()}`;
-        }
-      } catch (e) { log.warn(`Could not fetch file: ${e.message}`); }
+        const r = await fetch(`https://raw.githubusercontent.com/${match[1]}/${match[2]}/HEAD/${file}`);
+        if (r.ok) repoData += `\n\n=== ${file} ===\n${await r.text()}`;
+      } catch {}
     }
-    return `${repoContext}\n\nExplain this code following your explain-code skill instructions.`;
-  });
+  }
+
+  await runSkill(
+    "explain-code",
+    "Explain Code",
+    `Explain the specified file.\nAudience: ${level || "mid-level"}\n\n${repoData}`
+  );
 }
 
 // ─── Menu ─────────────────────────────────────────────────────────────────────
@@ -328,7 +361,6 @@ async function showMenu() {
   ╚██████╗╚██████╔╝██████╔╝███████╗███████╗███████╗██║ ╚████║███████║
    ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝
 ${c.reset}${c.cyan}${c.bold}                    Your GitHub Mentor Agent${c.reset}\n`);
-
   log.divider();
   console.log(`  ${c.bold}1.${c.reset} 🔍  Explain a repo`);
   console.log(`  ${c.bold}2.${c.reset} ❓  Generate interview questions`);
@@ -352,12 +384,10 @@ ${c.reset}${c.cyan}${c.bold}                    Your GitHub Mentor Agent${c.rese
 if (process.env.GOOGLE_API_KEY && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
   process.env.GOOGLE_GENERATIVE_AI_API_KEY = process.env.GOOGLE_API_KEY;
 }
-
 if (!process.env.GOOGLE_API_KEY && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-  log.warn("No API key found. Run:");
-  log.warn("  Windows PowerShell : $env:GOOGLE_API_KEY='AIza...'");
-  log.warn("  Mac/Linux          : export GOOGLE_API_KEY=AIza...");
-  log.warn("  Get key            : https://aistudio.google.com/app/apikey\n");
+  log.warn("No API key found.");
+  log.warn("  Windows: $env:GOOGLE_API_KEY='AIza...'");
+  log.warn("  Mac/Linux: export GOOGLE_API_KEY=AIza...");
   process.exit(1);
 }
 
