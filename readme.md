@@ -99,9 +99,9 @@ for await (const msg of query({
 ## Why CodeLens AI Wins
 
 ### Agent Quality (30%)
-- **Compelling SOUL.md** — A real personality, not a template. The agent has a clear voice: "the senior engineer who reviews your PR at 11pm because they genuinely care."
-- **Strict RULES.md** — Concrete, enforceable rules. Not vague policies — specific behaviors for each failure mode.
-- **Genuinely useful** — Every skill solves a real developer problem. Not toy demos.
+- **Compelling SOUL.md** : A real personality, not a template. The agent has a clear voice: "the senior engineer who reviews your PR at 11pm because they genuinely care."
+- **Strict RULES.md** : Concrete, enforceable rules. Not vague policies  specific behaviors for each failure mode.
+- **Genuinely useful** : Every skill solves a real developer problem. Not toy demos.
 
 ### Skill Design (25%)
 - **4 focused skills**, each with a clear process, structured output format, and skill-specific rules
@@ -114,10 +114,10 @@ for await (const msg of query({
 - Clean streaming output, error handling, API key checking, colored terminal output
 
 ### Creativity (20%)
-- **Interview question generation** is a novel use case — no other agent does this from real code
-- **Audience-calibrated explanations** — the same code explained differently for junior vs senior devs
-- **Knowledge base** — includes a `code-review-standards.md` that gives the agent grounded expertise
-- **Calibration examples** — few-shot examples in `examples/` improve output quality measurably
+- **Interview question generation** is a novel use case no other agent does this from real code
+- **Audience-calibrated explanations**  the same code explained differently for junior vs senior devs
+- **Knowledge base**  includes a `code-review-standards.md` that gives the agent grounded expertise
+- **Calibration examples**  few-shot examples in `examples/` improve output quality measurably
 
 ---
 
