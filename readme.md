@@ -12,7 +12,7 @@ CodeLens AI is a senior developer mentor that lives in a git repo. Point it at a
 
 | Skill | What It Does |
 |-------|-------------|
-| 🔍 **Explain Repo** | Turns an unfamiliar codebase into a fully understood one — architecture, flow, stack, entry points |
+| 🔍 **Explain Repo** | Turns an unfamiliar codebase into a fully understood one architecture, flow, stack, entry points |
 | ❓ **Interview Questions** | Generates codebase-specific technical questions at Junior/Mid/Senior levels — grounded in real code |
 | 🛠️ **Suggest Improvements** | Prioritized improvement report: Critical → High → Medium → Low, with exact files and specific fixes |
 | 💬 **Explain Code** | Walks through any file, function, or snippet — step-by-step, calibrated to audience level |
